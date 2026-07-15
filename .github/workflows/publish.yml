@@ -1,0 +1,43 @@
+name: Publish
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://npm.pkg.github.com
+          scope: "@majico-xyz"
+      - name: Checkout @majico-xyz/data source
+        uses: actions/checkout@v4
+        with:
+          repository: majico-xyz/majico-data
+          path: .deps/majico-data
+      - name: Link file dependency for build
+        run: |
+          cd .deps/majico-data && bun install && bun run build && cd ../..
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.dependencies=p.dependencies||{};p.dependencies['@majico-xyz/data']='file:./.deps/majico-data';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          rm -f bun.lock
+          bun install
+
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+      - name: Restore registry dependency ranges for publish
+        if: ${{ hashFiles('.deps/majico-data/package.json') != '' }}
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.dependencies&&p.dependencies['@majico-xyz/data']){p.dependencies['@majico-xyz/data']='^0.1.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');}"
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
